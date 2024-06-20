@@ -1,6 +1,9 @@
 import axios from 'axios';
 import express from 'express';
 
+
+
+const express = require('express');
 const app = express();
 
 app.use(express.json());
@@ -8,25 +11,38 @@ app.use(express.json());
 const PORT = 5173;
 let accessToken;
 const WEBHOOK_VERIFY_TOKEN = 'NOICE';
-let pageID ;
+let pageID;
 let userIGSID;
 
-const allowedOrigins =['http://localhost:8080', 'http://localhost:5173']
-app.use((req, res, next) =>{
-    const origin = req.headers.origin;
-    if(allowedOrigins.includes(origin)){
-      res.setHeader('Access-Control-Allow-Origin', origin);
-    }
-    res.header(
-      'Access-Control-Allow-Headers',
-        'Origin, X-Requested-With, Content-Type, Accept'
-    );
-    res.header(
-      'Access-Control-Allow-Methods',
-      'GET, POST, PUT, DELETE, OPTIONS, PATCH'
-    );
-    next();
-  });
+// Use a wildcard for allowed origins
+const allowedOrigins = ['*'];
+
+app.use((req, res, next) => {
+  // If you want to allow all origins
+  res.setHeader('Access-Control-Allow-Origin', '*');
+
+  // Alternatively, if you want to allow specific origins, you could use:
+  // const origin = req.headers.origin;
+  // if (allowedOrigins.includes(origin)) {
+  //   res.setHeader('Access-Control-Allow-Origin', origin);
+  // }
+
+  res.header(
+    'Access-Control-Allow-Headers',
+    'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-CSRF-Token, X-Api-Version'
+  );
+  res.header(
+    'Access-Control-Allow-Methods',
+    'GET, POST, PUT, DELETE, OPTIONS, PATCH'
+  );
+
+  // Handle preflight requests
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+
+  next();
+});
   
 
 const inputMap = new Map();
