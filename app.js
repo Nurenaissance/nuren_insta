@@ -5,31 +5,115 @@ const app = express();
 
 app.use(express.json());
 
-const PORT = 8080;
-const accessToken = 'EAAVZBobCt7AcBO0gtvcZAVwb3YXwbXONbQwZCYjyUVp9xNjZBXqHXxwz7Lpjm4yQZAKHe8DbNq7MD6kV3pMTqbAZAAt3YA4cYdZBb7m2bZBT0j36AVp1F2LzdoNZAJCoA8anEEV7v7F8PnBXXMSY8AE9y92OMjWgm3hviocs3QINpLwq7siOGyt0xxZCPxUWETObYZD';
+const PORT = 5173;
+let accessToken;
 const WEBHOOK_VERIFY_TOKEN = 'NOICE';
-const pageID = "254960371025173"
-const userIGSID = "17841466409033489"
+let pageID ;
+let userIGSID;
 
+const allowedOrigins =['http://localhost:8080', 'http://localhost:5173']
+app.use((req, res, next) =>{
+    const origin = req.headers.origin;
+    if(allowedOrigins.includes(origin)){
+      res.setHeader('Access-Control-Allow-Origin', origin);
+    }
+    res.header(
+      'Access-Control-Allow-Headers',
+        'Origin, X-Requested-With, Content-Type, Accept'
+    );
+    res.header(
+      'Access-Control-Allow-Methods',
+      'GET, POST, PUT, DELETE, OPTIONS, PATCH'
+    );
+    next();
+  });
+  
 
-//private replies
-//need permissions
-
-//product message, carousel
-//service temp unavailable
 const inputMap = new Map();
-var currNode=0
+var currNode=4
 var adjList;
-var flow;
+var flow, ice_breakers, pers_menu;
 var name;
+var mentionReply, commentReply, privateReply;
+
 app.post("/ig-flowdata" , async (req,res) => {
     adjList=req.body.adjacencyList;
     flow = req.body.nodes;
+    ice_breakers = req.body.ice_breakers;
+    if(ice_breakers) set_iceBreakers(ice_breakers)
+    pers_menu = req.body.pers_menu;
+    if(pers_menu) set_persMenu(pers_menu)
+    mentionReply = req.body.reply?.to_mentions;
+    commentReply = req.body.reply?.to_comments;
+    privateReply = req.body.reply?.to_private;
+
     console.log("REC DATA: ", req.body)
 
     res.status(200).json({ success: true, message: "flowdata sent successfully"});
 })
 
+async function set_persMenu(pers_menu){
+    let cta = [];
+    let type;
+    for(let i=0;i<pers_menu.length;i++){
+        if(pers_menu[i].type == 'link') {
+            cta.push({
+                type : "web_url",
+                title : pers_menu[i].body,
+                url : pers_menu[i].reply
+            })
+        }
+        else if(pers_menu[i].type == 'text'){
+            cta.push({
+                type : "postback",
+                title : pers_menu[i].body,
+                payload : `20${i}`
+            })
+        }
+    }
+    try{
+        const response = await axios.post(`https://graph.facebook.com/v11.0/${pageID}/messenger_profile?platform=instagram&access_token=${accessToken}` ,{
+            
+            persistent_menu : [
+                {
+                    call_to_actions : cta,
+                    locale : "default"
+                }
+            ]
+        })
+        console.log("persistent menu set successfully")
+        return response.data
+    } catch (error) {
+        console.error("ERROR in setting persistent menu", error.response.data);
+        return null;
+    }
+}
+
+async function set_iceBreakers(ice_breakers){
+    let cta = [];
+    for(let i=0;i<ice_breakers.length;i++){
+        cta.push({
+            question : ice_breakers[i].body,
+            payload : ice_breakers[i].id
+        })
+    }
+    try{
+        const response = await axios.post(`https://graph.facebook.com/v11.0/${pageID}/messenger_profile?platform=instagram&access_token=${accessToken}` ,{
+            platform : "instagram",
+            ice_breakers : [
+                {
+                    call_to_actions : cta,
+                    locale : "default"
+                }
+            ]
+        })
+        console.log("ice breakers set successfully")
+        return response.data
+    } catch (error) {
+        console.error("ERROR in setting ice breakers", error.response.data);
+        return null;
+    }
+}
 //quick replies
 async function sendQuickReplies(main_text, replies, rec_id){
     let quick_replies=[]
@@ -59,15 +143,81 @@ async function sendQuickReplies(main_text, replies, rec_id){
     }
 }
 
-async function sendButtons(buttons, main_text, rec_id){
-    let button_rows=[]
+async function setGenericElement(buttons, title, subtitle, rec_id, url, image_url){
+    let cta = [];
     for(let i=0;i<buttons.length;i++){
         const buttonNode = buttons[i];
-        button_rows.push({
-            type : "postback",
-            title : flow[buttonNode].body,
-            payload : flow[buttonNode].id.toString()
-        })
+        if(flow[buttonNode].type == 'link') {
+            cta.push({
+                type : "web_url",
+                title : flow[buttonNode].body,
+                url : flow[buttonNode].url
+            })
+        }
+        else if(flow[buttonNode].type == 'text'){
+            cta.push({
+                type : "postback",
+                title : flow[buttonNode].body,
+                payload : flow[buttonNode].id.toString()
+            })
+        }
+    }
+    console.log("GENERIC ROWS ", cta)
+    try {
+       let elements={}
+       if(title) elements.title = title;
+       if(image_url) elements.image_url = image_url;
+       if(subtitle) elements.subtitle = subtitle;
+       if(url) elements.default_action={
+        type: "web_url",
+        url: url
+       };
+       elements.buttons=cta;
+        const response = await axios.post(`https://graph.facebook.com/v19.0/${pageID}/messages?access_token=${accessToken}`, {
+            recipient : {
+                id : rec_id
+              },
+               message :{
+                attachment : {
+                    type : "template",
+                    payload: {
+                        template_type : "generic",
+                        elements : [
+                            elements
+                        ]
+                    }
+                }
+              }
+        });
+        return response.data
+    } catch (error) {
+        console.error("ERROR in sending generic template", error.response.data);
+        return null;
+    }
+    
+}
+
+async function sendButtons(buttons, main_text, rec_id){
+    let button_rows=[]
+    console.log("BUTTONS: " ,buttons)
+    for(let i=0;i<buttons.length;i++){
+        const buttonNode=buttons[i];
+        if(flow[buttonNode].type == "link") {
+            button_rows.push({
+                type : "web_url",
+                title : flow[buttonNode].body,
+                url : flow[buttonNode].url
+            })
+        }
+        else if(flow[buttonNode].type == "text"){
+            console.log("BTTON TYPE TEXT")
+            button_rows.push({
+                type : "postback",
+                title : flow[buttonNode].body,
+                payload : flow[buttonNode].id.toString()
+            })
+        }
+        console.log("TEST")
     }
     console.log("BUTTON ROWS ", button_rows)
     try {
@@ -109,21 +259,27 @@ async function sendString(message, rec_id){
         return null;
     }
 }
-//user profile API, generic template, button template
-//product template, private replies
 
 var nextNode;
 
 async function sendNodeMessage(node, rec_id){
-    if(node == 0 || nextNode.length != 0){
+    if(node == 4 || nextNode.length != 0){
         console.log("NODE: ", node)
         nextNode = adjList[node];
         const node_message = flow[node].body;
-        if(flow[node].type === "button"){
+        if(flow[node].type === "generic"){
+            const buttons = nextNode;
+            const title = flow[node].title
+            const subtitle = flow[node].subtitle
+            const url = flow[node].url
+            const image_url = flow[node].image_url
+            sendGeneric(buttons, title, subtitle, rec_id, url, image_url)
+        }
+        else if(flow[node].type === "button"){
             const buttons = nextNode;
             sendButtons(buttons, node_message, rec_id)
         }
-        else if(flow[node].type === 'quick replies'){
+        else if(flow[node].type === 'quick_replies'){
             const replies = nextNode;
             sendQuickReplies(node_message, replies, rec_id)
         }
@@ -132,17 +288,15 @@ async function sendNodeMessage(node, rec_id){
             currNode = nextNode[0];
             sendNodeMessage(currNode, rec_id);
         }
-        else if(flow[node].type === "Input"){
+        else if(flow[node].type === "input"){
             sendString(node_message, rec_id)
         }
     }
     else {
-        currNode = 0;
+        currNode = 4;
         nextNode = adjList[currNode];
     }
 }
-
-
 
 async function replyToMentions(entryID, mediaID, commentID, message){
     try {
@@ -159,7 +313,7 @@ async function replyToMentions(entryID, mediaID, commentID, message){
     }
 }
 
-async function replyToComment(mediaID, commentID, message) {
+async function replyToComment(commentID, message) {
     try {
         const response = await axios.post(`https://graph.facebook.com/${commentID}/replies`, {
             message: message,
@@ -172,71 +326,131 @@ async function replyToComment(mediaID, commentID, message) {
     }
 }
 
-async function getUserInfo(rec_id) {
+async function replyToComment_private(commentID, message){
     try {
-        const response = await axios.get(`https://graph.facebook.com/v19.0/${rec_id}`, {
-            params: {
-                access_token: accessToken
-            }
+        const response = await axios.post(`https://graph.facebook.com/${pageID}/messages`, {
+            recipient : {
+                comment_id : commentID
+            },
+            message : {
+                text : message
+            },
+            access_token: accessToken
         });
+        return response.data;
+    } catch (error) {
+        console.error("ERROR in replying to comment", error.response.data);
+        return null;
+    }
+}
+
+async function getUserInfo() {
+    try {
+        const response = await axios.get(`https://graph.facebook.com/v19.0/${pageID}?fields=id%2Cname%2Caccess_token%2Cinstagram_business_account&access_token=${accessToken}`);
         console.log("RESONSE " ,response.data)
-        const name = response.data.name;
-        return name
 
     } catch (error) {
-        console.error('Error fetching user account information:', error);
+        console.error('Error fetching user account information:', error.response ? error.response.data : error.message);
+        return null;
+    }
+}
+
+async function getPageInfo(user_access_token){
+    try{
+        const response = await axios.get('https://graph.facebook.com/v20.0/me/accounts' ,{
+            params : {
+                access_token : user_access_token
+            }
+        });
+        accessToken = response.data.data[0].access_token;
+        pageID = response.data.data[0].id;
+        console.log(response.data)
+    }
+    catch (error) {
+        console.error('Error fetching page access token:', error.response ? error.response.data : error.message);
+        return null;
+    }
+}
+
+async function getInstagramID(){
+    try{
+        const response = await axios.get(`https://graph.facebook.com/v20.0/${pageID}`,{
+            params:{
+                fields : 'instagram_business_account',
+                access_token : accessToken
+            }
+        })
+        userIGSID = response.data.instagram_business_account.id;
+        console.log(userIGSID);
+        
+    }catch (error) {
+        console.error('Error fetching user IGSID:', error.response ? error.response.data : error.message);
+        return null;
+    }
+}
+app.post("/postImage" ,async (req,res) => {
+    const image_url = req.body.image_url;
+    const user_access_token = req.body.access_token;
+    const caption = req.body?.caption;
+
+    await getPageInfo(user_access_token);
+    await getInstagramID()
+
+    const mediaID= await uploadMedia(image_url, caption);
+
+    res.status(200).send(mediaID)
+
+})
+async function uploadMedia(image_url, caption){
+    try {
+        // Uploading image in container
+        const uploadResponse = await axios.post(`https://graph.facebook.com/v19.0/${userIGSID}/media`, {
+            access_token: accessToken,
+            image_url: image_url,
+            caption : caption
+        });
+        const creation_id = uploadResponse.data.id;
+
+        // Publishing container to Instagram page
+        const publishResponse = await axios.post(`https://graph.facebook.com/v19.0/${userIGSID}/media_publish`, {
+            access_token: accessToken,
+            creation_id: creation_id
+        });
+        const mediaID = publishResponse.data.id;
+
+        console.log("MEDIA SUCCESSFULLY UPLOADED WITH MEDIA ID:", mediaID);
+        return mediaID;
+    } catch (error) {
+        console.error('Error uploading media:', error.response ? error.response.data : error.message);
         return null;
     }
 }
 
 
-async function uploadMedia(image_url){
-
-    //uploading image in container
-    const response = await axios.post(`https://graph.facebook.com/v19.0/${userIGSID}/media` ,{
-        access_token : accessToken,
-        image_url : image_url
-    });
-    const creation_id = response.data.id;
-
-    //publishing container to instagram page
-    const publishResponse = await axios.post(`https://graph.facebook.com/v19.0/${userIGSID}/media_publish` ,{
-        access_token : accessToken,
-        creation_id : creation_id
-    })
-    const mediaID=publishResponse.data.id;
-
-    console.log("MEDIA SUCCESSFULLY UPLOADED WITH MEDIA ID: " ,mediaID)
-}
-
-
-// Example usage:
-
-
-axios.post(`https://graph.facebook.com/v19.0/${pageID}/subscribed_apps?subscribed_fields=messages&access_token=${accessToken}`)
 var last_timestamp;
 app.post("/webhook", async (req, res) => {
     
     console.log("RECEIVED WEBHOOK:", JSON.stringify(req.body, null, 2));
     const bodyType = req.body.entry?.[0].changes?.[0].field;
     //replying to commments
-    if(bodyType== "comments") {
-        const mediaID = req.body.entry?.[0].changes?.[0].value?.media?.id;
+    if(bodyType == "comments") {
+        if(commentReply){
         const commentID = req.body.entry?.[0].changes?.[0].value?.id;
-        const message="Hi, I am batman. How can I assist you today?"
+        const message = commentReply;
         const parentID = req.body.entry?.[0].changes?.[0].value?.parent_id;
-        const value = req.body.entry?.[0].changes?.[0].value;
-        console.log({
-            "commentFrom" : value.from.username,
-            "text" : value.text
-        })
 
-        if(parentID == undefined) replyToComment(mediaID, commentID, message);
+        if(parentID == undefined) replyToComment(commentID, message);
+        }
+        else if(privateReply){
+            const commentID = req.body.entry?.[0].changes?.[0].value?.id;
+            const message = privateReply;
+            replyToComment_private(commentID, message)
+        }
     }
 
     //replying to mentions
     else if(bodyType == "mentions") {
-        const mention_reply = "Hi, did someone call batman?"
+        const mention_reply = mentionReply;
         const commentID = req.body.entry?.[0].changes?.[0].value?.comment_id 
         const mediaID = req.body.entry?.[0].changes?.[0].value?.media_id
         const entryID = req.body.entry?.[0].id
@@ -249,8 +463,9 @@ app.post("/webhook", async (req, res) => {
     else {
         const message_body=req.body.entry?.[0].messaging?.[0]
         const rec_id = message_body.sender.id;
+        
 
-        if(rec_id != userIGSID){
+        if(rec_id != userIGSID && !message_body.message?.is_deleted){
         
         
         const postback = message_body?.postback;
@@ -259,8 +474,16 @@ app.post("/webhook", async (req, res) => {
         // console.log("RECID: ", rec_id)
         if(postback){
             let postbackID=parseInt(postback.payload);
-            console.log("POSTBACKID ", postbackID)
+
+            if(postbackID < 300 && postbackID >= 200){
+                const id= postbackID%200
+                const reply = pers_menu[id].reply
+                sendString(reply, rec_id)
+            }
+            else{
+                console.log("POSTBACKID ", postbackID)
             nextNode.forEach(i => {
+                console.log("TEST1")
                 if(flow[i].id == postbackID){
                   currNode = i;
                   nextNode = adjList[currNode];
@@ -270,9 +493,11 @@ app.post("/webhook", async (req, res) => {
                   return;
                 }
             })
+            console.log("TEST2")
+            }
         }
         else if(message){
-            if(currNode!=0){
+            if(currNode!=4){
                 inputMap.set(currNode, message.text)
                 currNode=nextNode[0];
             }
@@ -300,6 +525,7 @@ app.get("/webhook", (req, res) => {
         res.sendStatus(403);
     }
 });
+
 app.get("/", (req, res) => {
     res.send(`<pre>Nothing to see here. Checkout README.md to start.</pre>`);
 });
@@ -307,6 +533,3 @@ app.get("/", (req, res) => {
 const server = app.listen(PORT, () => {
     console.log(`Server is listening on port: ${PORT}`);
 });
-
-const image_url="https://firebasestorage.googleapis.com/v0/b/nurenai.appspot.com/o/images%2Fkrishna.jpg?alt=media&token=8dc0c043-9e2e-41c8-b2d9-958d9229eb62";
-// sendQuickReplies("choose a color" , "red",  "green" ,"366085079221659");
